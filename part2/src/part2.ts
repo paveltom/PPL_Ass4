@@ -47,10 +47,10 @@ export function makeTableService<T>(sync: (table?: Table<T>) => Promise<Table<T>
 export function getAll<T>(store: TableService<T>, keys: string[]): Promise<T[]> {
     return Promise.all(
         keys.reduce((promList : Promise<T>[], key: string) => {
-                                promList.push(store.get(key));
+                                promList.push(store.get(key).catch(() => Promise.reject(MISSING_KEY)));
                                 return promList; 
                             }, [])
-    );
+    ).catch(() => Promise.reject(MISSING_KEY));
     
 
     // return Promise.all(keys.reduce((newList : T[], key: string) => {
@@ -101,23 +101,61 @@ export function isReference<T>(obj: T | Reference): obj is Reference {
 
 export async function constructObjectFromTables(tables: TableServiceTable, ref: Reference) {
     async function deref(ref: Reference) {
-        return Promise.reject('not implemented')
+        const refTabName = ref.table;
+        const valKey = ref.key;
+        const table = tables[refTabName];
+
+        if(table === undefined) return Promise.reject(MISSING_TABLE_SERVICE);   
+
+        return Promise.all(Object.entries(await table.get(valKey)).reduce((promList : Promise<[PropertyKey, any]>[], entry) => {
+            isReference(entry[1]) ? promList.push(deref(entry[1]).then((val) => {return [entry[0], val]})) : promList.push(Promise.resolve(entry));
+            return promList;
+        }, [])).then((obj) => {return Object.fromEntries(obj)}).catch(() => Promise.reject(MISSING_KEY));
+
+
+        //console.log("res: ", typeof(res));
+
+        // Object.entries(res).forEach(async (entry : [PropertyKey, any]) => {
+        //     console.log("curr entry: ", entry)
+        //     isReference(entry[1]) ? newObj.push([entry[0], await deref(entry[1])]) : newObj.push(entry) ;
+        // });
+
+        // console.log("new obj: ", newObj);
+        // return Object.fromEntries(newObj);
     }
 
-    return deref(ref)
+    
+    return deref(ref);
 }
 
 // Q 2.3
 
 export function lazyProduct<T1, T2>(g1: () => Generator<T1>, g2: () => Generator<T2>): () => Generator<[T1, T2]> {
     return function* () {
-        // TODO implement!
+        const f1 = g1();
+        while(true){  
+            const first = f1.next();  
+            if(first.done) return;   
+            const f2 = g2();     
+            while(true){
+                const second = f2.next();
+                if(second.done) break;
+                yield [first.value, second.value];
+            }  
+        }
     }
 }
 
 export function lazyZip<T1, T2>(g1: () => Generator<T1>, g2: () => Generator<T2>): () => Generator<[T1, T2]> {
     return function* () {
-        // TODO implement!
+        const f1 = g1();
+        const f2 = g2();
+        while(true){  
+            const first = f1.next();
+            const second = f2.next();  
+            if(first.done) return;   
+            yield [first.value, second.value];   
+        }
     }
 }
 
@@ -131,11 +169,24 @@ export type ReactiveTableService<T> = {
 
 export async function makeReactiveTableService<T>(sync: (table?: Table<T>) => Promise<Table<T>>, optimistic: boolean): Promise<ReactiveTableService<T>> {
     // optional initialization code
+    const subs : { (table: Table<T>) : void; } [] = [];
 
     let _table: Table<T> = await sync()
 
     const handleMutation = async (newTable: Table<T>) => {
-        // TODO implement!
+        try{
+            if(optimistic){
+                subs.forEach(func => func(newTable));
+                await sync(newTable).then((updTable) => {
+                    _table = updTable;}).catch((error) => {throw error;});
+            }
+            else await sync(newTable).then((updTable) => {
+                _table = updTable; subs.forEach(func => func(updTable))}).catch((error) => {throw error;});
+
+        }catch(error){
+            subs.forEach(func => func(_table));
+            return Promise.reject(error);
+        }
     }
     return {
         get(key: string): T {
@@ -146,14 +197,19 @@ export async function makeReactiveTableService<T>(sync: (table?: Table<T>) => Pr
             }
         },
         set(key: string, val: T): Promise<void> {
-            return handleMutation(null as any /* TODO */)
+            if(key in _table) Promise.reject();
+            return handleMutation(Object.assign(Object.assign({}, _table), {[key] : val}));
         },
         delete(key: string): Promise<void> {
-            return handleMutation(null as any /* TODO */)
+            if(key in _table) return handleMutation(Object.fromEntries(Object.entries(_table).reduce((newTab : [PropertyKey, any][], entry : [PropertyKey, any]) => {
+                                                                                    if(entry[0] != key) newTab.push(entry);
+                                                                                    return newTab;
+                                                                                }, [])));
+            return Promise.reject(MISSING_KEY);
         },
 
         subscribe(observer: (table: Table<T>) => void): void {
-            // TODO implement!
+            subs.push(observer);
         }
     }
 }
