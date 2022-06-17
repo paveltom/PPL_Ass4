@@ -14,22 +14,79 @@ export function makeTableService<T>(sync: (table?: Table<T>) => Promise<Table<T>
     // optional initialization code
     return {
         get(key: string): Promise<T> {
-            //return sync().then((updTable: Table<T>) => updTable[key]).catch(() => Promise.reject(MISSING_KEY));
-            return sync().then((t:Table<T>)=>Promise.resolve(t[key]).catch((error)=>Promise.reject(MISSING_KEY))).catch((error)=>Promise.reject(MISSING_KEY))
-
+            return sync().then((updTable: Table<T>) => updTable[key] != undefined ?  updTable[key] : Promise.reject(MISSING_KEY)).catch(() => Promise.reject(MISSING_KEY));
         },
         set(key: string, val: T): Promise<void> {
-            return Promise.reject('not implemented')
+            return sync().then((updTable: Table<T>) => 
+                    new Promise<void>(
+                            (resolve, reject) => {
+                                        if(updTable[key] != undefined) reject(); 
+                                        const newTable:Table<any> = Object.assign(updTable, {[key] : val}); 
+                                        //console.log(newTable);
+                                        sync(newTable).then(()=>resolve());
+                                    })
+                                ).catch(() => Promise.reject(MISSING_KEY));
         },
         delete(key: string): Promise<void> {
-            return Promise.reject('not implemented')
+            return sync().then((updTable: Table<T>) => 
+                    new Promise<void>(
+                            (resolve, reject) => {
+                                        if(updTable[key] === undefined) reject(MISSING_KEY); 
+                                        const newTable:Table<any> = 
+                                            Object.keys(updTable).reduce((newTab : Table<any>, k: string) => {
+                                                                                            if(k != key) { newTab = Object.assign(newTab, {[k] : updTable[k]}); } return newTab;}, {}); 
+                                        //console.log(newTable);
+                                        sync(newTable).then(()=>resolve());
+                                    })
+                                ).catch(() => Promise.reject(MISSING_KEY));
         }
     }
-}
+} 
 
 // Q 2.1 (b)
 export function getAll<T>(store: TableService<T>, keys: string[]): Promise<T[]> {
-    return Promise.reject('not implemented')
+    return Promise.all(
+        keys.reduce((promList : Promise<T>[], key: string) => {
+                                promList.push(store.get(key));
+                                return promList; 
+                            }, [])
+    );
+    
+
+    // return Promise.all(keys.reduce((newList : T[], key: string) => {
+    //                 store.get(key).then((res) => {newList.push(res); }).catch(() => {return Promise.reject(MISSING_KEY);})
+    //                 return newList; }, []));
+
+
+    // function getting(key: string) {
+    //     return new Promise((resolve, reject) => {
+    //         resolve(store.get(key));
+    //     })
+    // }
+
+    // return Promise.all(keys.reduce((newList : T[], key: string) => {
+    //     store.get(key).then((val : T) => {
+    //         newList.push(val);
+    //     }).catch();
+    //     return newList;
+    // }, []));
+
+    // execute all promises here
+                    
+    //let out = [];
+    // //console.log(keys);
+    // for(let i = 0; i < keys.length; i++){
+
+    //     out.push(new Promise((resolve, reject) => {}))
+
+    //     const val = store.get(keys[i]);
+    //     val.then((res) => {out.push(res)}).catch(() => {return Promise.reject(MISSING_KEY)});
+    // }
+    // // const val = store.get(keys[0]);
+    // // val.then((res) => {console.log("curr res: ", res); out.push(res)}).catch(() => {return Promise.reject(MISSING_KEY)});
+    // return Promise.all(out);
+
+
 }
 
 
